@@ -34,6 +34,7 @@ import {
   updateVisit,
   useConnectivity,
   formatDatetime,
+  usePatient,
 } from '@openmrs/esm-framework';
 import {
   convertTime12to24,
@@ -57,20 +58,24 @@ import VisitDateTimeField from './visit-date-time.component';
 import { useVisits } from '../visits-widget/visit.resource';
 import { useOfflineVisitType } from '../hooks/useOfflineVisitType';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
+import { useMutateAppointments } from '../hooks/useMutateAppointments';
+import classNames from 'classnames';
 
 dayjs.extend(isSameOrBefore);
 
 interface StartVisitFormProps extends DefaultPatientWorkspaceProps {
   visitToEdit?: Visit;
   showVisitEndDateTimeFields: boolean;
+  showPatientHeader?: boolean;
 }
 
 const StartVisitForm: React.FC<StartVisitFormProps> = ({
-  patientUuid,
+  patientUuid: initialPatientUuid,
   closeWorkspace,
   promptBeforeClosing,
   visitToEdit,
   showVisitEndDateTimeFields,
+  showPatientHeader = false,
 }) => {
   const { t } = useTranslation();
   const isTablet = useLayoutType() === 'tablet';
@@ -80,12 +85,14 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
   const errorFetchingLocations = isOnline ? error : false;
   const sessionLocation = sessionUser?.sessionLocation;
   const config = useConfig() as ChartConfig;
+  const { patientUuid, patient } = usePatient(initialPatientUuid);
   const [contentSwitcherIndex, setContentSwitcherIndex] = useState(config.showRecommendedVisitTypeTab ? 0 : 1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const visitHeaderSlotState = useMemo(() => ({ patientUuid }), [patientUuid]);
   const { activePatientEnrollment, isLoading } = useActivePatientEnrollment(patientUuid);
   const { mutate: mutateCurrentVisit } = useVisit(patientUuid);
   const { mutateVisits } = useVisits(patientUuid);
+  const { mutateAppointments } = useMutateAppointments();
   const allVisitTypes = useConditionalVisitTypes();
 
   const { mutate } = useVisit(patientUuid);
@@ -316,10 +323,10 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
         visitType: visitType,
         location: visitLocation?.uuid,
         attributes: Object.entries(visitAttributes)
-          .filter(([key, value]) => !!value)
+          .filter(([, value]) => !!value)
           .map(([key, value]) => ({
             attributeType: key,
-            value: value as string,
+            value: value,
           })),
       };
       if (visitToEdit?.uuid) {
@@ -330,23 +337,21 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
       if (displayVisitStopDateTimeFields) {
         const [visitStopHours, visitStopMinutes] = convertTime12to24(visitStopTime, visitStopTimeFormat);
 
-        payload = {
-          ...payload,
-          stopDatetime: toDateObjectStrict(
-            toOmrsIsoString(
-              new Date(
-                dayjs(visitStopDate).year(),
-                dayjs(visitStopDate).month(),
-                dayjs(visitStopDate).date(),
-                visitStopHours,
-                visitStopMinutes,
-              ),
+        payload.stopDatetime = toDateObjectStrict(
+          toOmrsIsoString(
+            new Date(
+              dayjs(visitStopDate).year(),
+              dayjs(visitStopDate).month(),
+              dayjs(visitStopDate).date(),
+              visitStopHours,
+              visitStopMinutes,
             ),
           ),
-        };
+        );
       }
 
       const abortController = new AbortController();
+
       if (config.showExtraVisitAttributesSlot) {
         const { handleCreateExtraVisitInfo, attributes } = extraVisitInfo ?? {};
         payload.attributes.push(...attributes);
@@ -365,11 +370,11 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
                 if (config.showServiceQueueFields) {
                   // retrieve values from queue extension
                   setVisitUuid(response.data.uuid);
-                  const queueLocation = event?.target['queueLocation']?.value;
-                  const serviceUuid = event?.target['service']?.value;
-                  const priority = event?.target['priority']?.value;
-                  const status = event?.target['status']?.value;
-                  const sortWeight = event?.target['sortWeight']?.value;
+                  const queueLocation = event.target['queueLocation']?.value;
+                  const serviceUuid = event.target['service']?.value;
+                  const priority = event.target['priority']?.value;
+                  const status = event.target['status']?.value;
+                  const sortWeight = event.target['sortWeight']?.value;
 
                   saveQueueEntry(
                     response.data.uuid,
@@ -378,9 +383,9 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
                     priority,
                     status,
                     sortWeight,
-                    new AbortController(),
                     queueLocation,
                     visitQueueNumberAttributeUuid,
+                    abortController,
                   ).then(
                     ({ status }) => {
                       if (status === 201) {
@@ -404,11 +409,13 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
                     },
                   );
                 }
+
                 if (config.showUpcomingAppointments && upcomingAppointment) {
-                  updateAppointmentStatus('CheckedIn', upcomingAppointment?.uuid, abortController).then(
+                  updateAppointmentStatus('CheckedIn', upcomingAppointment.uuid, abortController).then(
                     () => {
                       mutateCurrentVisit();
                       mutateVisits();
+                      mutateAppointments();
                       showSnackbar({
                         isLowContrast: true,
                         kind: 'success',
@@ -465,7 +472,7 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
           config.offlineVisitTypeUuid,
           payload.startDatetime,
         ).then(
-          (offlineVisit) => {
+          () => {
             mutate();
             closeWorkspace({ ignoreChanges: true });
             showSnackbar({
@@ -477,7 +484,7 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
               title: t('visitStarted', 'Visit started'),
             });
           },
-          (error) => {
+          (error: Error) => {
             showSnackbar({
               title: t('startVisitError', 'Error starting visit'),
               kind: 'error',
@@ -506,6 +513,7 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
       extraVisitInfo,
       isOnline,
       mutate,
+      mutateAppointments,
       mutateQueueEntry,
       validateVisitStartStopDatetime,
     ],
@@ -527,6 +535,16 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
   return (
     <FormProvider {...methods}>
       <Form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
+        {showPatientHeader && patient && (
+          <ExtensionSlot
+            name="patient-header-slot"
+            state={{
+              patient,
+              patientUuid: patientUuid,
+              hideActionsOverflow: true,
+            }}
+          />
+        )}
         {errorFetchingResources && (
           <InlineNotification
             kind={errorFetchingResources?.blockSavingForm ? 'error' : 'warning'}
@@ -681,7 +699,13 @@ const StartVisitForm: React.FC<StartVisitFormProps> = ({
             )}
           </Stack>
         </div>
-        <ButtonSet className={isTablet ? styles.tablet : styles.desktop}>
+        <ButtonSet
+          className={classNames({
+            [styles.tablet]: isTablet,
+            [styles.desktop]: !isTablet,
+            [styles.buttonSet]: true,
+          })}
+        >
           <Button className={styles.button} kind="secondary" onClick={closeWorkspace}>
             {t('discard', 'Discard')}
           </Button>

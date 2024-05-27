@@ -26,7 +26,9 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { type Control, Controller, useController, useForm } from 'react-hook-form';
 import {
+  ExtensionSlot,
   age,
+  displayName,
   formatDate,
   parseDate,
   translateFrom,
@@ -172,6 +174,7 @@ function MedicationInfoHeader({
           </strong>
         </>
       ) : null}{' '}
+      <ExtensionSlot name="medication-info-slot" state={{ order: orderBasketItem }} />
     </div>
   );
 }
@@ -302,14 +305,20 @@ export function DrugOrderForm({ initialOrderBasketItem, onSave, onCancel, prompt
     [orderConfigObject, config?.daysDurationUnit],
   );
 
-  const orderFrequencies: Array<MedicationFrequency> = useMemo(
-    () => orderConfigObject?.orderFrequencies ?? [],
-    [orderConfigObject],
-  );
+  const orderFrequencies: Array<MedicationFrequency> = useMemo(() => {
+    return orderConfigObject?.orderFrequencies ?? [];
+  }, [orderConfigObject]);
+
+  const filterItems = useCallback((menu) => {
+    if (menu?.inputValue?.length) {
+      return menu.item?.names?.some((abbr: string) => abbr.toLowerCase().includes(menu.inputValue.toLowerCase()));
+    }
+    return menu?.item?.names ?? [];
+  }, []);
 
   const [showStickyMedicationHeader, setShowMedicationHeader] = useState(false);
   const { patient, isLoading: isLoadingPatientDetails } = usePatient();
-  const patientName = `${patient?.name?.[0]?.given?.join(' ')} ${patient?.name?.[0].family}`;
+  const patientName = patient ? displayName(patient) : '';
   const { maxDispenseDurationInDays } = useConfig();
 
   const observer = useRef(null);
@@ -477,6 +486,7 @@ export function DrugOrderForm({ initialOrderBasketItem, onSave, onCancel, prompt
                         size={isTablet ? 'lg' : 'md'}
                         id="editFrequency"
                         items={orderFrequencies}
+                        shouldFilterItem={filterItems}
                         placeholder={t('editFrequencyComboBoxTitle', 'Frequency')}
                         titleText={t('editFrequencyComboBoxTitle', 'Frequency')}
                         itemToString={(item) => item?.value}
@@ -766,6 +776,8 @@ const ControlledFieldInput = ({
   control,
   getValues,
   handleAfterChange,
+  optionsWithAbbreviations,
+  orderFrequencies,
   ...restProps
 }: ControlledFieldInputProps) => {
   const {
